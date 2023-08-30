@@ -16,8 +16,11 @@ data class USStandardizedAddress(val primaryRange: String,
                                  val state: String,
                                  val postalCode: String):
     StandardizedAddress {
-    override fun toString(): String {
-        return "$primaryRange $preDirection $streetName $suffix $postDirection $secondaryIdentifier $secondaryRange $city $state $postalCode".replace("\\s+", " ")
-    }
+//    override fun toString(): String {
+//        return "USStandardizedAddress(primaryRange='$primaryRange', preDirection='$preDirection', streetName='$streetName', suffix='$suffix', postDirection='$postDirection', secondaryIdentifier='$secondaryIdentifier', secondaryRange='$secondaryRange', city='$city', state='$state', postalCode='$postalCode')"
+//    }
 
+    override fun toString(): String {
+        return "$primaryRange $preDirection $streetName $suffix $postDirection $secondaryIdentifier $secondaryRange $city $state $postalCode".replace("\\s+".toRegex(), " ")
     }
+}
