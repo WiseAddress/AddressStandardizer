@@ -5,7 +5,7 @@ import java.io.File
 
 fun main(args: Array<String>) {
     val standardizer = USStandardizer()
-    val address = standardizer.standardize("789 South Oak Street Springfield Illinois 12345 6789")
+    val address = standardizer.standardize("789 North South Oak Street Suite 101C West Springfield West Virginia 12345 6789")
     println(address)
 //    createModel()
 //    loadModel()
