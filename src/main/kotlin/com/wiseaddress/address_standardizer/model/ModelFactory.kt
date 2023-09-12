@@ -20,12 +20,14 @@ class ModelFactory {
             val data = JSONObject(JSONTokener(FileReader(f))).toMap()
             val streetAbr = HashMap<String, String>()
             val secondaryUnits = HashMap<String, String>()
+            var secondaryRangeUnneeded = listOf("")
             val states = HashMap<String, String>()
             val directions = HashMap<String, String>()
             val miscellaneous = HashMap<String, String>()
             val csl = HashMap<String, String>()
+
             if (data["street_abbreviations"] != null) {
-                val m : Map<String, List<String>> = data["street_abbreviations"] as Map<String, List<String>>
+                val m = data["street_abbreviations"] as Map<String, List<String>>
                 for (key in m.keys) {
                     streetAbr[key] = key
                     for (value in m[key]!!) {
@@ -34,16 +36,21 @@ class ModelFactory {
                 }
             }
 
-            if (data["secondary_units"] != null) {
-                val m : Map<String, String> = data["secondary_units"] as Map<String, String>
-                for (key in m.keys) {
-                    secondaryUnits[key] = key
-                    m[key]?.let { secondaryUnits.put(it.uppercase(), key) }
+            if (data["secondary"] != null) {
+                val s = data["secondary"] as Map<String, Any>
+                if (s["units"] != null) {
+                    val m = s["units"] as Map<String, String>
+                    for (key in m.keys) {
+                        secondaryUnits[key] = key
+                        m[key]?.let { secondaryUnits.put(it.uppercase(), key) }
+                    }
                 }
+                // kotlin's nullability policy is unfortunate
+                secondaryRangeUnneeded = ( s["range_unneeded"] ?: secondaryRangeUnneeded ) as List<String>
             }
 
             if (data["states"] != null) {
-                val m : Map<String, String> = data["states"] as Map<String, String>
+                val m = data["states"] as Map<String, String>
                 for (key in m.keys) {
                     states[key] = key
                     m[key]?.let { states.put(it.uppercase(), key) }
@@ -51,7 +58,7 @@ class ModelFactory {
             }
 
             if (data["directions"] != null) {
-                val m : Map<String, String> = data["directions"] as Map<String, String>
+                val m = data["directions"] as Map<String, String>
                 for (key in m.keys) {
                     directions[key] = key
                     m[key]?.let { directions.put(it.uppercase(), key) }
@@ -59,7 +66,7 @@ class ModelFactory {
             }
 
             if (data["miscellaneous"] != null) {
-                val m : Map<String, List<String>> = data["miscellaneous"] as Map<String, List<String>>
+                val m = data["miscellaneous"] as Map<String, List<String>>
                 for (key in m.keys) {
                     miscellaneous[key] = key
                     for (value in m[key]!!) {
@@ -69,7 +76,7 @@ class ModelFactory {
             }
 
             if (data["county_state_localhwy"] != null) {
-                val m : Map<String, List<String>> = data["county_state_localhwy"] as Map<String, List<String>>
+                val m = data["county_state_localhwy"] as Map<String, List<String>>
                 for (key in m.keys) {
                     csl[key] = key
                     for (value in m[key]!!) {
@@ -78,7 +85,7 @@ class ModelFactory {
                 }
             }
 
-            val mdl = Model(streetAbr, secondaryUnits, states, directions, miscellaneous, csl)
+            val mdl = Model(streetAbr, secondaryUnits, secondaryRangeUnneeded, states, directions, miscellaneous, csl)
             File("./models").mkdir()
             ObjectOutputStream(FileOutputStream("./models/" + c + ".model")).use{ it -> it.writeObject(mdl)}
         }
