@@ -120,9 +120,9 @@ class USStandardizer : AddressStandardizer {
 
     private fun handleStandardStreets(splitAddress: MutableList<String>): Pair<String, String>? {
         var streetName = ""
-        var suffix = ""
-        var current = ""
-        var next = ""
+        var suffix: String
+        var current: String
+        var next: String
         while (splitAddress.size > 0) {
             current = splitAddress.removeFirst()
             if (model.street_abbreviations.contains(current)) {
@@ -135,6 +135,8 @@ class USStandardizer : AddressStandardizer {
                     splitAddress.add(0, next)
                 }
                 return Pair(streetName.trim(), suffix)
+            } else {
+                streetName = "$streetName $current"
             }
         }
         return null
