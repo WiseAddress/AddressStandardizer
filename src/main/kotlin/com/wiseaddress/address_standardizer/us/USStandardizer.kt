@@ -6,7 +6,7 @@ import com.wiseaddress.address_standardizer.model.Model
 import com.wiseaddress.address_standardizer.model.ModelFactory
 
 class USStandardizer : AddressStandardizer {
-    private var model: Model = ModelFactory.load("us");
+    private var model: Model = ModelFactory.load("us")
 
     override fun standardize(address: String): USStandardizedAddress {
         val splitAddress = address.uppercase().split(' ').toMutableList()
@@ -118,42 +118,25 @@ class USStandardizer : AddressStandardizer {
         return null
     }
 
-    // TODO remove old code -- I modified it slightly to make it trim once at the end before returning
-    private fun oldHandleStandardStreets(splitAddress: MutableList<String>): Pair<String, String> {
-        var found = false
+    private fun handleStandardStreets(splitAddress: MutableList<String>): Pair<String, String>? {
         var streetName = ""
         var suffix = ""
-        try {
-            while (!found) {
-                val section = splitAddress.removeFirst()
-                if (model.street_abbreviations.contains(section)) {
-                    val nextSection = splitAddress.removeFirst()
-                    if (model.street_abbreviations.contains(nextSection)) {
-                        streetName = "$streetName $section"
-                        suffix = model.street_abbreviations[nextSection] as String
-                    } else {
-                        suffix = model.street_abbreviations[section] as String
-                        splitAddress.add(0, nextSection)
-                    }
-                    found = true
+        var current = ""
+        var next = ""
+        while (splitAddress.size > 0) {
+            current = splitAddress.removeFirst()
+            if (model.street_abbreviations.contains(current)) {
+                next = splitAddress.removeFirst()
+                if (model.street_abbreviations.contains(next)) {
+                    streetName = "$streetName $current"
+                    suffix = model.street_abbreviations[next] as String
                 } else {
-                    streetName = "$streetName $section"
+                    suffix = model.street_abbreviations[current] as String
+                    splitAddress.add(0, next)
                 }
+                return Pair(streetName.trim(), suffix)
             }
-        } catch (e: Exception) {
-            throw InvalidAddressException("Could not find a valid suffix based on the USPS specifications! See https://pe.usps.com/text/pub28/28apc_002.htm for more info!")
         }
-        return Pair(streetName.trim(), suffix.trim())
-    }
-
-    private fun handleStandardStreets(splitAddress: MutableList<String>): Pair<String, String>? {
-        // TODO rewrite to deal with cases where there are three suffixes in a row?
-            // go from left to right, check for suffixes
-            // when one is found, check if there's another one after it
-            // if there is, move further to the right and check again
-        // TODO also deal with two word suffixes (Ranch Road, etc.)
-            // maybe take care of these in special cases
-
         return null
     }
 
@@ -179,31 +162,20 @@ class USStandardizer : AddressStandardizer {
             splitAddress.add(0, section)
         }
 
-        // TODO there has to be a way to bundle this information in the original json file instead of hard-coding it in here
-        range = when (identifier) {
-            // no range if no identifier
-            "" -> ""
-            // must have a range, will evaluate as null if not found
-            "#", "APT", "BLDG", "DEPT", "FL", "HNGR", "KEY", "LOT", "PIER", "RM", "SLIP", "SPC", "STOP", "STE", "TRLR", "UNIT"
-                -> getSecondaryRange(splitAddress)
-            // may not have a range, will evaluate as empty string if not found
-            "BSMT", "FRNT", "LBBY", "LOWR", "OFC", "PH", "REAR", "SIDE", "UPPR"
-                -> getSecondaryRange(splitAddress) ?: ""
-            // this should never happen
-            else -> null
-        } ?: return null // return null only if a secondary range is required but none is found
+        // errors if a range is needed but none is found, otherwise gets a range if needed
+        range = if (identifier == "") "" else getSecondaryRange(splitAddress)
+            ?: if (model.secondary_range_unneeded.contains(identifier)) "" else return null
 
         return Pair(identifier, range)
     }
 
-    // TODO this may need updating later, but for now this should cover almost everything
     private fun getSecondaryRange(splitAddress: MutableList<String>): String? {
         // checks for permitted characters in first word
         val first = splitAddress.removeFirst()
         if ( (first.all { it.isDigit() }) // 201
-            || (first.length == 1 && first[0].isLetter()) // A
-            || (first.substring(0, first.length-1).all { it.isDigit() || it == '-' } ) // 201C or 201-C
-            || (first.substring(1, first.length).all { it.isDigit() || it == '-' } ) // A200 or A-200
+          || (first.length == 1 && first[0].isLetter()) // A
+          || (first.substring(0, first.length-1).all { it.isDigit() || it == '-' } ) // 201C or 201-C
+          || (first.substring(1, first.length).all { it.isDigit() || it == '-' } ) // A200 or A-200
             ) {
             return first
         }
