@@ -4,11 +4,12 @@ import com.wiseaddress.address_standardizer.us.USStandardizer
 import java.io.File
 
 fun main(args: Array<String>) {
-    val standardizer = USStandardizer()
-    val address = standardizer.standardize("789 North South Oak Street Drive Road Suite 101C West Springfield West Virginia 12345 6789")
-    println(address)
 //    createModel()
 //    loadModel()
+
+    val standardizer = USStandardizer()
+    val address = standardizer.standardize("789 North South Oak Street Drive Suite 101C West Springfield West Virginia 12345 6789")
+    println(address)
 }
 
 fun loadModel() {
