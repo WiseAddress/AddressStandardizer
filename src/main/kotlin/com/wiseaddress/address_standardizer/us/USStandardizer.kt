@@ -2,17 +2,31 @@ package com.wiseaddress.address_standardizer.us
 
 import com.wiseaddress.address_standardizer.AddressStandardizer
 import com.wiseaddress.address_standardizer.exception.InvalidAddressException
+import com.wiseaddress.address_standardizer.exception.InvalidModelException
 import com.wiseaddress.address_standardizer.model.Model
 import com.wiseaddress.address_standardizer.model.ModelFactory
 
 class USStandardizer : AddressStandardizer {
-    private var model: Model = ModelFactory.load("us")
+    private var model: Model
+
+    init {
+        try {
+            model = ModelFactory.load("us")
+        } catch (e : InvalidModelException) { // if for some reason the model is corrupted, rethrow and tell user to recreate the model.
+            throw InvalidModelException("Could not read the model! " +
+                    "Please recreate the model by using the static ModelFactory.create() function, " +
+                    "or download the US model and put it under <current working directory>/models/us.model. Original stack trace below:\n${e.stackTraceToString()}")
+        }
+    }
+
+    // Basically just to output more debug information on an error
+    private var currentSecondaryIdentifier = ""
 
     override fun standardize(address: String): USStandardizedAddress {
         val splitAddress = address.uppercase().split(' ').toMutableList()
 
         val primaryRange = getPrimaryRange(splitAddress)
-            ?: throw InvalidAddressException("No valid address range found! It should be a number, that may have a letter attached.")
+            ?: throw InvalidAddressException("No valid address range found! It should be a number, that may have a letter attached. Primary range checked: ${splitAddress[0]}")
 
         val postalCode = getPostalCode(splitAddress)
         val state = getState(splitAddress)
@@ -21,21 +35,34 @@ class USStandardizer : AddressStandardizer {
 
         val preDirection = getDirection(splitAddress)
         val (streetName, suffix) = getStreet(splitAddress)
-            ?: throw InvalidAddressException("Could not find a valid suffix based on the USPS specifications! See https://pe.usps.com/text/pub28/28apc_002.htm for more info!")
+            ?: throw InvalidAddressException("Could not find a valid suffix based on the USPS specifications!\nSee https://pe.usps.com/text/pub28/28apc_002.htm for more info!")
 
         val postDirection = if (preDirection == "") getDirection(splitAddress) else ""
         val (secondaryIdentifier, secondaryRange) = getSecondaryAddress(splitAddress)
-            ?: throw InvalidAddressException("TODO message")
+            ?: throw InvalidAddressException("Could not find a valid secondary range that is required by the current secondary identifier \"$currentSecondaryIdentifier\"." +
+                    "\nOnly some identifiers do not require a valid secondary range to follow.\nSee https://pe.usps.com/text/pub28/28apc_003.htm for more info.")
         val city = getCity(splitAddress)
 
         return USStandardizedAddress(primaryRange, preDirection, streetName, suffix, postDirection, secondaryIdentifier, secondaryRange, city, state, postalCode)
     }
 
+    private fun primaryRangePredicate(it: Char) : Boolean {
+        return it.isLetterOrDigit() || it == '.' || it == '-' || it == '/'
+    }
+
     private fun getPrimaryRange(splitAddress: MutableList<String>) : String? {
         // checks for permitted characters in first word
-        if (splitAddress[0].all { it.isLetterOrDigit() || it == '.' || it == '-' }) {
-            // checks for fraction in second word
-            if (splitAddress[1].all { it.isDigit() || it == '/' }) {
+        if (splitAddress[0].all { primaryRangePredicate(it) }) {
+            // checks for fraction in second word and make sure that first word doesn't have a fraction
+            if (!splitAddress[0].contains("/") && splitAddress[1].all { it.isDigit() || it == '/' }) {
+                // handling cases like 1 / 3
+                if (splitAddress[1].length == 1) {
+                    if (splitAddress[2].all { primaryRangePredicate(it) }) {
+                        return "${splitAddress.removeFirst()}${splitAddress.removeFirst()}${splitAddress.removeFirst()}"
+                    }
+                    return null
+                }
+                // the normal cases 1 3/4
                 return "${splitAddress.removeFirst()} ${splitAddress.removeFirst()}"
             }
             return splitAddress.removeFirst()
@@ -100,7 +127,7 @@ class USStandardizer : AddressStandardizer {
             }
             // put back words if not found
             splitAddress.add(0, second)
-            return model.directions[first] as String;
+            return model.directions[first] as String
         }
 
         // put back words if not found
@@ -164,6 +191,8 @@ class USStandardizer : AddressStandardizer {
             splitAddress.add(0, section)
         }
 
+        currentSecondaryIdentifier = identifier
+
         // errors if a range is needed but none is found, otherwise gets a range if needed
         range = if (identifier == "") "" else getSecondaryRange(splitAddress)
             ?: if (model.secondary_range_unneeded.contains(identifier)) "" else return null
@@ -175,10 +204,12 @@ class USStandardizer : AddressStandardizer {
         // checks for permitted characters in first word
         val first = splitAddress.removeFirst()
         if ( (first.all { it.isDigit() }) // 201
-          || (first.length == 1 && first[0].isLetter()) // A
-          || (first.substring(0, first.length-1).all { it.isDigit() || it == '-' } ) // 201C or 201-C
-          || (first.substring(1, first.length).all { it.isDigit() || it == '-' } ) // A200 or A-200
-            ) {
+             || (first.length == 1 && first[0].isLetter()) // A
+             || (first.length != 1 // Cases where the range is submitted as #, ?, etc. are accounted for
+                    && ((first.substring(0, first.length-1).all { it.isDigit() || it == '-' } ) // 201C or 201-C
+                    || (first.substring(1, first.length).all { it.isDigit() || it == '-' } ) // A200 or A-200
+            ))) {
+
             return first
         }
         // put back words if not found
