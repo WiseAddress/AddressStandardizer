@@ -92,7 +92,7 @@ Normalization references include USPS Publication 28 [directionals](https://pe.u
 
 ## Tests and performance
 
-`./gradlew clean build jmhClasses` runs regression tests, builds distributions, verifies packaged lookup data, and compiles benchmarks. CI runs this same command on JDK 21.
+`./gradlew clean build jmhClasses` runs regression tests, builds distributions, verifies packaged lookup data, and compiles benchmarks.
 
 ```sh
 ./gradlew benchmark
