@@ -16,16 +16,17 @@ class USStandardizer @JvmOverloads constructor(private val model: Model = ModelF
         val state = state(tail)
         if (state.isEmpty() && postalCode.isEmpty()) invalid("A valid state or ZIP code is required")
         if (tail.size == 0) invalid("Delivery address is missing")
+        val localityEnd = tail.end
 
         val cityBoundary = input.boundaries.lastOrNull { it < tail.end && !streets.beginsSecondary(input.tokens, it) }
         val boundary = cityBoundary
-            ?: tail.end.takeIf { end -> end in input.boundaries && input.tokens.subList(1, end).none { it in model.street_abbreviations } }
+            ?: tail.end.takeIf { end -> end in input.boundaries && (1 until end).none { input.tokens[it] in model.street_abbreviations } }
         val deliveryEnd = boundary ?: tail.end
-        val delivery = input.tokens.subList(0, deliveryEnd)
-        val special = parseSpecialDelivery(delivery)
+        val special = if (input.tokens[0][0] in '0'..'9') null
+            else parseSpecialDelivery(input.tokens.subList(0, deliveryEnd))
         if (special != null) {
             if (cityBoundary != null && special.consumed != deliveryEnd) invalid("Unexpected words after the box number")
-            val city = city(input.tokens.subList(cityBoundary ?: special.consumed, tail.end))
+            val city = city(input.tokens, cityBoundary ?: special.consumed, localityEnd)
             validateMilitary(city, state, special.type)
             return USStandardizedAddress(
                 "", "", "", "", "", "", "", city, state, postalCode,
@@ -33,8 +34,9 @@ class USStandardizer @JvmOverloads constructor(private val model: Model = ModelF
             )
         }
 
-        val street = streets.parse(delivery, boundary != null)
-        val city = city(input.tokens.subList(boundary ?: street.consumed, tail.end))
+        tail.end = deliveryEnd
+        val street = streets.parse(tail, boundary != null)
+        val city = city(input.tokens, boundary ?: street.consumed, localityEnd)
         validateMilitary(city, state, USAddressType.STREET)
         return USStandardizedAddress(
             street.number, street.preDirection, street.name, street.suffix, street.postDirection,
@@ -70,11 +72,12 @@ class USStandardizer @JvmOverloads constructor(private val model: Model = ModelF
         return ""
     }
 
-    private fun city(tokens: List<String>): String {
-        if (tokens.isNotEmpty() && (!tokens.any { word -> word.any { it.isLetter() } } || tokens.any { word ->
+    private fun city(tokens: List<String>, from: Int, until: Int): String {
+        if (from < until && (!(from until until).any { index -> tokens[index].any { it.isLetter() } } || (from until until).any { index ->
+                val word = tokens[index]
                 word.none { it.isLetterOrDigit() } || word.any { !it.isLetterOrDigit() && it != '-' && it != '\'' }
-            })) invalid("Invalid city or unparsed address components: ${tokens.joinToString(" ")}")
-        return tokens.joinToString(" ")
+            })) invalid("Invalid city or unparsed address components: ${tokens.text(from, until)}")
+        return tokens.text(from, until)
     }
 
     private fun validateMilitary(city: String, state: String, type: USAddressType) {

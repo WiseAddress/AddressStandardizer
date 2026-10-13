@@ -10,12 +10,7 @@ internal data class SpecialDelivery(
     val consumed: Int,
 )
 
-private val number = Regex("[0-9]+")
-private val highwayNumber = Regex("[0-9]+[A-Z]?")
-private val routeBoxNumber = Regex("[0-9]+[A-Z]?(?:-[0-9]+[A-Z]?)?")
-private val postOfficeBoxNumber = Regex("[0-9]+|[A-Z]")
 private val compactRoute = Regex("(RR|RFD|RD|HC)([0-9]+[A-Z]?)")
-private val leadingRouteZeros = Regex("^0+(?=[0-9])")
 
 internal fun parseSpecialDelivery(tokens: List<String>): SpecialDelivery? {
     val first = tokens.firstOrNull() ?: return null
@@ -70,7 +65,7 @@ internal fun parseSpecialDelivery(tokens: List<String>): SpecialDelivery? {
 private fun parsePostOfficeBox(tokens: List<String>, start: Int): SpecialDelivery {
     val index = if (tokens.getOrNull(start) == "#") start + 1 else start
     val box = tokens.getOrNull(index)?.removePrefix("#")
-    if (box == null || !postOfficeBoxNumber.matches(box)) {
+    if (box == null || !(box.isAsciiDigits() || box.length == 1 && box[0] in 'A'..'Z')) {
         throw InvalidAddressException("PO BOX requires a numeric box number or a single letter.")
     }
     return SpecialDelivery(USAddressType.PO_BOX, boxNumber = box, consumed = index + 1)
@@ -90,8 +85,7 @@ private fun parseRouteBox(
         }
     }
     val route = inlineNumber ?: tokens.getOrNull(index++)?.removePrefix("#")
-    val routePattern = if (type == USAddressType.HIGHWAY_CONTRACT) highwayNumber else number
-    if (route == null || !routePattern.matches(route)) {
+    if (route == null || !(if (type == USAddressType.HIGHWAY_CONTRACT) route.isNumberWithOptionalLetter() else route.isAsciiDigits())) {
         throw InvalidAddressException("${type.name} requires a valid route or unit number.")
     }
     val marker = tokens.getOrNull(index)
@@ -102,11 +96,10 @@ private fun parseRouteBox(
     }
     if (tokens.getOrNull(index) == "#") index++
     val box = tokens.getOrNull(index)?.removePrefix("#")
-    val boxPattern = if (type == USAddressType.MILITARY) number else routeBoxNumber
-    if (box == null || !boxPattern.matches(box)) {
+    if (box == null || !(if (type == USAddressType.MILITARY) box.isAsciiDigits() else box.isRouteBoxNumber())) {
         throw InvalidAddressException("${type.name} requires a valid box number.")
     }
-    val normalizedRoute = if (type == USAddressType.MILITARY) route else route.replace(leadingRouteZeros, "")
+    val normalizedRoute = if (type == USAddressType.MILITARY) route else route.withoutLeadingRouteZeros()
     return SpecialDelivery(type, normalizedRoute, box, militaryUnit, index + 1)
 }
 
@@ -117,4 +110,21 @@ private fun expectToken(tokens: List<String>, index: Int, expected: String) {
     if (tokens.getOrNull(index) != expected) {
         throw InvalidAddressException("Expected $expected in special delivery address.")
     }
+}
+
+private fun String.isNumberWithOptionalLetter(from: Int = 0, until: Int = length): Boolean {
+    val digitsEnd = if (from < until && this[until - 1] in 'A'..'Z') until - 1 else until
+    return isAsciiDigits(from, digitsEnd)
+}
+
+private fun String.isRouteBoxNumber(): Boolean {
+    val hyphen = indexOf('-')
+    return if (hyphen < 0) isNumberWithOptionalLetter()
+    else isNumberWithOptionalLetter(until = hyphen) && isNumberWithOptionalLetter(from = hyphen + 1)
+}
+
+private fun String.withoutLeadingRouteZeros(): String {
+    var start = 0
+    while (start + 1 < length && this[start] == '0' && this[start + 1] in '0'..'9') start++
+    return if (start == 0) this else substring(start)
 }

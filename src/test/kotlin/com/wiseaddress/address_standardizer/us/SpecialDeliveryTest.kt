@@ -105,6 +105,17 @@ class SpecialDeliveryTest {
     }
 
     @Test
+    fun `route letters and hyphens preserve numeric segments and significant box zeros`() {
+        assertEquals(
+            SpecialDelivery(USAddressType.HIGHWAY_CONTRACT, "0A", "023A-004B", consumed = 4),
+            parse("HC 000A BOX 023A-004B CHICAGO"),
+        )
+        for (box in listOf("23AA-4B", "23A-4BB", "23A-4B-5", "\u0661")) {
+            assertFailsWith<InvalidAddressException>(box) { parse("HC 1 BOX $box CHICAGO") }
+        }
+    }
+
+    @Test
     fun `recognized incomplete forms fail with domain errors`() {
         val malformed = listOf(
             "PO", "PO BOX", "PO BOX CHICAGO", "PO BOX -0145", "PO BOX 12/3", "P O", "POST OFFICE",

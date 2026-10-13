@@ -100,6 +100,6 @@ Normalization references include USPS Publication 28 [directionals](https://pe.u
 ./gradlew benchmark -PbenchmarkArgs='.*commonParsing.*'
 ```
 
-JMH measures successful and rejected parsing, cached construction, and fresh JSON model loading separately, with warmup, multiple forks, consumed results, and GC allocation profiling. Benchmark reports are written to ignored `agent_work/benchmarks/`. Measure on your workload before setting a throughput target; parsing correctness and startup costs are separate from steady-state speed.
+JMH measures successful and rejected parsing, cached construction, and fresh JSON model loading separately, with warmup, multiple forks, consumed results, and GC allocation profiling. Alongside the small compatibility corpus, `variedParsing` exercises 1,024 distinct addresses across eight delivery forms and checks every parsed field before measurement. Benchmark reports are written to ignored `agent_work/benchmarks/`. Measure on your workload before setting a throughput target; parsing correctness and startup costs are separate from steady-state speed.
 
 Apache-2.0 licensed; see [LICENSE](LICENSE).
