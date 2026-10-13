@@ -1,35 +1,48 @@
-import com.wiseaddress.address_standardizer.model.Model
-import com.wiseaddress.address_standardizer.model.ModelFactory
+import com.wiseaddress.address_standardizer.exception.InvalidAddressException
+import com.wiseaddress.address_standardizer.exception.InvalidModelException
 import com.wiseaddress.address_standardizer.us.USStandardizer
-import java.io.File
-import kotlin.system.measureNanoTime
+import java.io.PrintStream
+import kotlin.system.exitProcess
+
+private const val USAGE = """Usage: address-standardizer <US address>
+
+Normalizes a supported US address into one canonical line.
+Quote the address to preserve commas or delivery/locality line breaks.
+
+Example: address-standardizer "123 Main Street, Springfield IL 62704"
+
+Options:
+  -h, --help  Show this help
+
+Exit codes: 0 success, 2 invalid input, 1 model unavailable.
+"""
 
 fun main(args: Array<String>) {
-//    createModel()
-//    loadModel()
+    exitProcess(runCli(args, System.out, System.err))
+}
 
-    val standardizer = USStandardizer()
-    val elapsed = measureNanoTime {
-        for (i in 0..999999) {
-            standardizer.standardize("$i North South Oak Street Drive # $i-A West Springfield 12345 6789")
-        }
+internal fun runCli(args: Array<String>, output: PrintStream, error: PrintStream): Int {
+    if (args.size == 1 && (args[0] == "-h" || args[0] == "--help")) {
+        output.print(USAGE)
+        return 0
     }
-    val elapsedInSeconds = elapsed / (1_000_000 * 1000)
-    //My results:
-    //Time to standardize 1000000 addresses: 1 seconds. Estimated time per address: 1391 nanoseconds
-    println("Time to standardize 1000000 addresses: $elapsedInSeconds seconds. Estimated time per address: ${elapsed / (1_000_000)} nanoseconds")
-    println(standardizer.standardize("789 North South Oak Street Drive # 123-A West Springfield 12345 6789"))
-}
+    if (args.isEmpty()) {
+        error.print(USAGE)
+        return 2
+    }
+    if (args[0].startsWith("-")) {
+        error.println("Unknown option: ${args[0]}. Use --help for usage.")
+        return 2
+    }
 
-fun loadModel() {
-    println("Loading model from \"models/us.model\"")
-
-    val m : Model = ModelFactory.load("us")
-    println(m)
-}
-
-fun createModel() {
-    println("Creating model from \"data/usdata.json\"")
-
-    ModelFactory.create(File("./data/usdata.json"), "us")
+    return try {
+        output.println(USStandardizer().standardize(args.joinToString(" ")).format())
+        0
+    } catch (exception: InvalidAddressException) {
+        error.println("Invalid address: ${exception.message}")
+        2
+    } catch (exception: InvalidModelException) {
+        error.println("Cannot load address data: ${exception.message}")
+        1
+    }
 }

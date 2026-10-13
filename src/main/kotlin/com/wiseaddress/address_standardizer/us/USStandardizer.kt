@@ -2,223 +2,93 @@ package com.wiseaddress.address_standardizer.us
 
 import com.wiseaddress.address_standardizer.AddressStandardizer
 import com.wiseaddress.address_standardizer.exception.InvalidAddressException
-import com.wiseaddress.address_standardizer.exception.InvalidModelException
 import com.wiseaddress.address_standardizer.model.Model
 import com.wiseaddress.address_standardizer.model.ModelFactory
 
-class USStandardizer : AddressStandardizer {
-    private var model: Model
-
-    init {
-        try {
-            model = ModelFactory.load("us")
-        } catch (e : InvalidModelException) { // if for some reason the model is corrupted, rethrow and tell user to recreate the model.
-            throw InvalidModelException("Could not read the model! " +
-                    "Please recreate the model by using the static ModelFactory.create() function, " +
-                    "or download the US model and put it under <current working directory>/models/us.model. Original stack trace below:\n${e.stackTraceToString()}")
-        }
-    }
-
-    // Basically just to output more debug information on an error
-    private var currentSecondaryIdentifier = ""
+/** Offline US address parser. Instances and their immutable lookup data can be shared across threads. */
+class USStandardizer @JvmOverloads constructor(private val model: Model = ModelFactory.load("us")) : AddressStandardizer {
+    private val streets = StreetParser(model)
 
     override fun standardize(address: String): USStandardizedAddress {
-        val splitAddress = address.uppercase().split(' ').toMutableList()
+        val input = AddressInput(address)
+        val tail = TokenCursor(input.tokens)
+        val postalCode = postalCode(tail)
+        val state = state(tail)
+        if (state.isEmpty() && postalCode.isEmpty()) invalid("A valid state or ZIP code is required")
+        if (tail.size == 0) invalid("Delivery address is missing")
 
-        val primaryRange = getPrimaryRange(splitAddress)
-            ?: throw InvalidAddressException("No valid address range found! It should be a number, that may have a letter attached. Primary range checked: ${splitAddress[0]}")
-
-        val postalCode = getPostalCode(splitAddress)
-        val state = getState(splitAddress)
-        if (postalCode == "" && state == "")
-            throw InvalidAddressException("Neither a valid state nor a valid postal code found in the address!")
-
-        val preDirection = getDirection(splitAddress)
-        val (streetName, suffix) = getStreet(splitAddress)
-            ?: throw InvalidAddressException("Could not find a valid suffix based on the USPS specifications!\nSee https://pe.usps.com/text/pub28/28apc_002.htm for more info!")
-
-        val postDirection = if (preDirection == "") getDirection(splitAddress) else ""
-        val (secondaryIdentifier, secondaryRange) = getSecondaryAddress(splitAddress)
-            ?: throw InvalidAddressException("Could not find a valid secondary range that is required by the current secondary identifier \"$currentSecondaryIdentifier\"." +
-                    "\nOnly some identifiers do not require a valid secondary range to follow.\nSee https://pe.usps.com/text/pub28/28apc_003.htm for more info.")
-        val city = getCity(splitAddress)
-
-        return USStandardizedAddress(primaryRange, preDirection, streetName, suffix, postDirection, secondaryIdentifier, secondaryRange, city, state, postalCode)
-    }
-
-    private fun primaryRangePredicate(it: Char) : Boolean {
-        return it.isLetterOrDigit() || it == '.' || it == '-' || it == '/'
-    }
-
-    private fun getPrimaryRange(splitAddress: MutableList<String>) : String? {
-        // checks for permitted characters in first word
-        if (splitAddress[0].all { primaryRangePredicate(it) }) {
-            // checks for fraction in second word and make sure that first word doesn't have a fraction
-            if (!splitAddress[0].contains("/") && splitAddress[1].all { it.isDigit() || it == '/' }) {
-                // handling cases like 1 / 3
-                if (splitAddress[1].length == 1) {
-                    if (splitAddress[2].all { primaryRangePredicate(it) }) {
-                        return "${splitAddress.removeFirst()}${splitAddress.removeFirst()}${splitAddress.removeFirst()}"
-                    }
-                    return null
-                }
-                // the normal cases 1 3/4
-                return "${splitAddress.removeFirst()} ${splitAddress.removeFirst()}"
-            }
-            return splitAddress.removeFirst()
+        val cityBoundary = input.boundaries.lastOrNull { it < tail.end && !streets.beginsSecondary(input.tokens, it) }
+        val boundary = cityBoundary
+            ?: tail.end.takeIf { end -> end in input.boundaries && input.tokens.subList(1, end).none { it in model.street_abbreviations } }
+        val deliveryEnd = boundary ?: tail.end
+        val delivery = input.tokens.subList(0, deliveryEnd)
+        val special = parseSpecialDelivery(delivery)
+        if (special != null) {
+            if (cityBoundary != null && special.consumed != deliveryEnd) invalid("Unexpected words after the box number")
+            val city = city(input.tokens.subList(cityBoundary ?: special.consumed, tail.end))
+            validateMilitary(city, state, special.type)
+            return USStandardizedAddress(
+                "", "", "", "", "", "", "", city, state, postalCode,
+                special.type, special.routeNumber, special.boxNumber, special.militaryUnit,
+            )
         }
-        return null
+
+        val street = streets.parse(delivery, boundary != null)
+        val city = city(input.tokens.subList(boundary ?: street.consumed, tail.end))
+        validateMilitary(city, state, USAddressType.STREET)
+        return USStandardizedAddress(
+            street.number, street.preDirection, street.name, street.suffix, street.postDirection,
+            street.unit, street.unitRange, city, state, postalCode,
+        )
     }
 
-    private fun getPostalCode(splitAddress: MutableList<String>): String {
-        val last = splitAddress.removeLast()
+    private fun postalCode(tokens: TokenCursor): String {
+        val last = tokens.last() ?: return ""
         when (last.length) {
-            // zip or zip+4 formatted perfectly
-            10, 5 -> {
-                return last
-            }
-            // zip+4 with no separator
-            9 -> {
-                return "${last.substring(0,5)}-${last.substring(5,9)}"
-            }
-            // zip+4 with a space (or invalid)
+            5 -> if (last.isAsciiDigits()) { tokens.end--; return last }
+            10 -> if (last[5] == '-' && last.isAsciiDigits(0, 5) && last.isAsciiDigits(6)) { tokens.end--; return last }
+            9 -> if (last.isAsciiDigits()) { tokens.end--; return last.take(5) + "-" + last.takeLast(4) }
             4 -> {
-                val secondLast = splitAddress.removeLast()
-                if (secondLast.length == 5) {
-                    return "$secondLast-$last"
+                val previous = tokens.last(1)
+                if (last.isAsciiDigits() && previous?.length == 5 && previous.isAsciiDigits()) {
+                    tokens.end -= 2
+                    return "$previous-$last"
                 }
-                // put back word if not valid
-                splitAddress.add(secondLast)
             }
         }
-        // put back word if not valid
-        splitAddress.add(last)
+        if (last.any { it.isDigit() }) invalid("Invalid ZIP code '$last'; expected 12345 or 12345-6789")
         return ""
     }
 
-    private fun getState(splitAddress: MutableList<String>): String {
-        // longest US state name is currently 2 words
-        val last = splitAddress.removeLast()
-        val secondLast = splitAddress.removeLast()
-        // checking the last two words first in case of West Virginia
-        // (Virginia is also a valid state)
-        val guessedState = "$secondLast $last"
-
-        if (model.states.contains(guessedState)) {
-            return model.states[guessedState] as String
+    private fun state(tokens: TokenCursor): String {
+        val last = tokens.last() ?: return ""
+        for (length in model.stateWordCountsByLastToken[last] ?: return "") {
+            if (length > tokens.size) continue
+            val candidate = if (length == 1) last else tokens.text(tokens.end - length)
+            model.states[candidate]?.let { tokens.end -= length; return it }
         }
-        // put back the words if not found
-        splitAddress.add(secondLast)
-
-        if (model.states.contains(last)) {
-            return model.states[last] as String
-        }
-        // put back the words if not found
-        splitAddress.add(last)
         return ""
     }
 
-    private fun getDirection(splitAddress: MutableList<String>): String {
-        val first = splitAddress.removeFirst()
-        if (model.directions.contains(first)) {
-            val second = splitAddress.removeFirst()
-            if (model.directions.contains("$first$second")) {
-                return model.directions["$first$second"] as String
-            }
-            // put back words if not found
-            splitAddress.add(0, second)
-            return model.directions[first] as String
+    private fun city(tokens: List<String>): String {
+        if (tokens.isNotEmpty() && (!tokens.any { word -> word.any { it.isLetter() } } || tokens.any { word ->
+                word.none { it.isLetterOrDigit() } || word.any { !it.isLetterOrDigit() && it != '-' && it != '\'' }
+            })) invalid("Invalid city or unparsed address components: ${tokens.joinToString(" ")}")
+        return tokens.joinToString(" ")
+    }
+
+    private fun validateMilitary(city: String, state: String, type: USAddressType) {
+        val militaryCity = city in MILITARY_CITIES
+        val militaryState = state in MILITARY_STATES
+        if (militaryCity != militaryState || (type == USAddressType.MILITARY && !militaryCity)) {
+            invalid("Military addresses require APO, FPO, or DPO with AA, AE, or AP")
         }
-
-        // put back words if not found
-        splitAddress.add(0, first)
-        return ""
     }
 
-    private fun getStreet(splitAddress: MutableList<String>): Pair<String, String>? {
-        // delegate to first function for special cases, second function for standard cases
-        return handleSpecialStreets(splitAddress) ?: handleStandardStreets(splitAddress)
-    }
-
-    private fun handleSpecialStreets(splitAddress: MutableList<String>): Pair<String, String>? {
-        // TODO actually handle the special cases -- currently a placeholder
-        return null
-    }
-
-    private fun handleStandardStreets(splitAddress: MutableList<String>): Pair<String, String>? {
-        var streetName = ""
-        var suffix: String
-        var current: String
-        var next: String
-        while (splitAddress.size > 0) {
-            current = splitAddress.removeFirst()
-            if (model.street_abbreviations.contains(current)) {
-                next = splitAddress.removeFirst()
-                if (model.street_abbreviations.contains(next)) {
-                    streetName = "$streetName $current"
-                    suffix = model.street_abbreviations[next] as String
-                } else {
-                    suffix = model.street_abbreviations[current] as String
-                    splitAddress.add(0, next)
-                }
-                return Pair(streetName.trim(), suffix)
-            } else {
-                streetName = "$streetName $current"
-            }
-        }
-        return null
-    }
-
-    private fun getSecondaryAddress(splitAddress: MutableList<String>): Pair<String, String>? {
-        val section = splitAddress.removeFirst()
-
-        // dealing with stuff like "#357" when it should be "# 357"
-        if (section.length > 1 && section.all { it == '#' || it.isDigit() }) {
-            return Pair("#", section.substring(1))
-        }
-
-        val identifier: String
-        val range: String?
-
-        // normal procedure
-        if (section == "#") {
-            identifier = "#"
-        } else if (model.secondary_units.contains(section)) {
-            identifier = model.secondary_units[section] ?: "" // as String
-        } else {
-            identifier = ""
-            // put back words if not found
-            splitAddress.add(0, section)
-        }
-
-        currentSecondaryIdentifier = identifier
-
-        // errors if a range is needed but none is found, otherwise gets a range if needed
-        range = if (identifier == "") "" else getSecondaryRange(splitAddress)
-            ?: if (model.secondary_range_unneeded.contains(identifier)) "" else return null
-
-        return Pair(identifier, range)
-    }
-
-    private fun getSecondaryRange(splitAddress: MutableList<String>): String? {
-        // checks for permitted characters in first word
-        val first = splitAddress.removeFirst()
-        if ( (first.all { it.isDigit() }) // 201
-             || (first.length == 1 && first[0].isLetter()) // A
-             || (first.length != 1 // Cases where the range is submitted as #, ?, etc. are accounted for
-                    && ((first.substring(0, first.length-1).all { it.isDigit() || it == '-' } ) // 201C or 201-C
-                    || (first.substring(1, first.length).all { it.isDigit() || it == '-' } ) // A200 or A-200
-            ))) {
-
-            return first
-        }
-        // put back words if not found
-        splitAddress.add(0, first)
-        return null
-    }
-
-    private fun getCity(splitAddress: MutableList<String>): String {
-        // all remaining words by this point should be part of the city name
-        return splitAddress.joinToString(" ")
+    private companion object {
+        val MILITARY_CITIES = setOf("APO", "FPO", "DPO")
+        val MILITARY_STATES = setOf("AA", "AE", "AP")
     }
 }
+
+internal fun invalid(message: String): Nothing = throw InvalidAddressException(message)

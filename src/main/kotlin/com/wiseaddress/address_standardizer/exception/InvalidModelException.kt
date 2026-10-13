@@ -1,3 +1,3 @@
 package com.wiseaddress.address_standardizer.exception
 
-class InvalidModelException(msg: String) : IllegalStateException(msg)
+class InvalidModelException(message: String, cause: Throwable? = null) : IllegalStateException(message, cause)

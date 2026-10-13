@@ -1,6 +1,9 @@
 # Compiled class file
 *.class
 
+# Local agent plans, notes, and scratch work
+/agent_work/
+
 # Log file
 *.log
 
@@ -12,6 +15,7 @@
 
 # Package Files #
 *.jar
+!/gradle/wrapper/gradle-wrapper.jar
 *.war
 *.nar
 *.ear
@@ -46,6 +50,7 @@ workspace.xml
 /js/js.translator/testData/out-min/
 /js/js.translator/testData/out-pir/
 .gradle/
+.kotlin/
 build/
 !**/src/**/build
 !**/test/**/build
