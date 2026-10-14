@@ -110,9 +110,10 @@ class SpecialDeliveryTest {
             SpecialDelivery(USAddressType.HIGHWAY_CONTRACT, "0A", "023A-004B", consumed = 4),
             parse("HC 000A BOX 023A-004B CHICAGO"),
         )
-        for (box in listOf("23AA-4B", "23A-4BB", "23A-4B-5", "\u0661")) {
-            assertFailsWith<InvalidAddressException>(box) { parse("HC 1 BOX $box CHICAGO") }
+        for (box in listOf("23AA-4B", "23A-4BB", "23A-4B-5")) {
+            assertEquals(box, parse("HC 1 BOX $box CHICAGO")?.boxNumber)
         }
+        assertFailsWith<InvalidAddressException> { parse("HC 1 BOX \u0661 CHICAGO") }
     }
 
     @Test
@@ -121,7 +122,7 @@ class SpecialDeliveryTest {
             "PO", "PO BOX", "PO BOX CHICAGO", "PO BOX -0145", "PO BOX 12/3", "P O", "POST OFFICE",
             "RR", "RR BOX 3", "RR 1", "RR 1 BOX", "RR 1 BOX CHICAGO", "RR 1A BOX 2", "RR 1 BOX 2--A",
             "RURAL 1 BOX 2", "RR01", "HC", "HC X BOX 2", "HIGHWAY CONTRACT ROUTE", "STAR ROUTE 4",
-            "RR L BOX 1", "RR 1 BOX L", "HC L BOX 1", "HC 1 BOX L", "PO BOX AB", "PO BOX ##123",
+            "RR L BOX 1", "HC L BOX 1", "PO BOX AB", "PO BOX ##123",
             "PSC", "PSC 3", "PSC 3 BOX", "PSC X BOX 3", "PSC 3 BOX X", "PSC 3A BOX 1", "PSC 3 BOX 1A",
             "UNIT 2 #3 APO", "CMR 2 APO",
         )

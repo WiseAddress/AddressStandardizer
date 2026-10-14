@@ -55,7 +55,8 @@ public class VariedParsingBenchmark {
         String[] militaryCities = {"APO", "FPO", "DPO"};
         String[] militaryStates = {"AE", "AP", "AA"};
         for (int i = 0; i < addresses.length; i++) {
-            String label = letters(i);
+            // Keep generated name labels distinct from Pub 28 suffix aliases such as BG and CT.
+            String label = "TEST" + letters(i);
             String house = Integer.toString(100 + i);
             String city = "TESTVILLE " + label;
             String zip = Integer.toString(60000 + i);

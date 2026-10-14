@@ -1,0 +1,28 @@
+# USPS Publication 28, Appendix C2; checked 2026-10-13.
+# https://pe.usps.com/text/pub28/28apc_003.htm
+# HANGER is the spelling printed in both the HTML table and the October 2024 PDF.
+# full name	code	range requirement
+APARTMENT	APT	required
+BASEMENT	BSMT	optional
+BUILDING	BLDG	required
+DEPARTMENT	DEPT	required
+FLOOR	FL	required
+FRONT	FRNT	optional
+HANGER	HNGR	required
+KEY	KEY	required
+LOBBY	LBBY	optional
+LOT	LOT	required
+LOWER	LOWR	optional
+OFFICE	OFC	optional
+PENTHOUSE	PH	optional
+PIER	PIER	required
+REAR	REAR	optional
+ROOM	RM	required
+SIDE	SIDE	optional
+SLIP	SLIP	required
+SPACE	SPC	required
+STOP	STOP	required
+SUITE	STE	required
+TRAILER	TRLR	required
+UNIT	UNIT	required
+UPPER	UPPR	optional

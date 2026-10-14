@@ -171,6 +171,33 @@ class ModelFactoryTest {
         }
     }
 
+    @Test
+    fun `secondary aliases accept one or several spellings with the same validation`() {
+        val data = JSONObject(validJson)
+        data.getJSONObject("secondary").getJSONObject("units").put("BSMT", JSONArray(listOf("BASEMENT", "CELLAR")))
+        val model = ModelFactory.parse(data.toString())
+        assertEquals("BSMT", model.secondary_units["CELLAR"])
+        assertEquals("BSMT", model.secondary_units["BASEMENT"])
+        for (value in listOf(JSONArray(listOf("CELLAR", "cellar")), JSONArray(listOf(1)), JSONObject.NULL)) {
+            data.getJSONObject("secondary").getJSONObject("units").put("BSMT", value)
+            assertInvalid(data, "secondary.units.BSMT")
+        }
+    }
+
+    @Test
+    fun `full suffix names must agree with known canonical aliases`() {
+        val data = JSONObject(validJson).put("street_suffix_names", JSONObject().put("ST", "STREET"))
+        val model = ModelFactory.parse(data.toString())
+        assertEquals("STREET", model.streetFullNames["ST"])
+        assertEquals("STREET", model.streetFullNames["STREET"])
+        assertFailsWith<UnsupportedOperationException> { (model.streetFullNames as MutableMap).clear() }
+        for (names in listOf(
+            JSONObject().put("RD", "ROAD"), JSONObject().put("ST", "ROAD"),
+            JSONObject().put("ST", "STREET").put("st", "STREET"), JSONObject().put("ST", 12),
+        )) assertInvalid(JSONObject(validJson).put("street_suffix_names", names), "street_suffix_names")
+        assertTrue(ModelFactory.parse(validJson).streetFullNames.isEmpty())
+    }
+
     private fun copyModel(
         streets: Map<String, String> = ModelFactory.load().street_abbreviations,
         ranges: List<String> = ModelFactory.load().secondary_range_unneeded,

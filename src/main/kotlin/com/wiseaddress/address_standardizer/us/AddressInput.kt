@@ -48,6 +48,8 @@ internal class AddressInput(address: String) {
         val INITIALS = Regex("(?:\\p{L}\\.)+\\p{L}?")
 
         fun normalizePeriods(word: String): String {
+            val dot = word.indexOf('.')
+            if (dot > 0 && word.isAsciiDigits(0, dot) && word.isAsciiDigits(dot + 1)) return word
             val trimmed = word.trimEnd('.')
             return when {
                 trimmed.isNotEmpty() && trimmed.all(Char::isLetter) -> trimmed

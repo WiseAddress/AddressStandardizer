@@ -11,33 +11,56 @@ internal data class StreetDelivery(
     val unit: String,
     val unitRange: String,
     val consumed: Int,
+    val privateMailbox: String = "",
 )
 
 /** Owns the delivery line grammar; locality and lookup loading live outside this parser. */
-internal class StreetParser(private val model: Model) {
-    fun beginsSecondary(tokens: List<String>, at: Int): Boolean {
-        if (tokens[at] == "#") return true
-        if (tokens[at] !in model.secondary_units) return false
-        return tokens.getOrNull(at + 1)?.let { it == "#" || isUnitRange(it) } == true
+internal class StreetParser(private val model: Model, private val secondaries: SecondaryParser = SecondaryParser(model)) {
+    fun beginsSecondary(tokens: List<String>, at: Int, end: Int = tokens.size): Boolean = secondaries.begins(tokens, at, end)
+
+    fun beginsDelivery(tokens: List<String>, start: Int, end: Int): Boolean {
+        if (start + 2 >= end) return false
+        val primary = tokens[start]
+        if (primary.none { it in '0'..'9' }) return false
+        if (!primary.isAsciiDigits() && !validFraction(primary) && !HOUSE_NUMBER.matches(primary)) return false
+        // Without a suffix, a numeric city name and a second street cannot be separated reliably.
+        return (start + 2 until end).any { tokens[it] in model.street_abbreviations }
     }
 
-    fun parse(cursor: TokenCursor, explicitBoundary: Boolean): StreetDelivery {
+    fun parse(cursor: TokenCursor, explicitBoundary: Boolean, preserveStreetWords: Boolean = false): StreetDelivery {
         val tokens = cursor.tokens
         val end = cursor.end
         val number = houseNumber(cursor)
         if (cursor.size == 0) invalid("Street name is missing")
-        highway(cursor, number, explicitBoundary)?.let { return it }
+        if (preserveStreetWords && cursor.first() in PUERTO_RICO_STREET_TYPES) {
+            return preservedStreet(cursor, number, explicitBoundary)
+        }
+        highway(cursor, number, explicitBoundary, preserveStreetWords)?.let { return it }
 
         val start = cursor.start
         val unitStart = findUnit(tokens, start, end)
         val boundedStreet = explicitBoundary || unitStart != null
         var streetEnd = unitStart ?: end
+        val alphabeticStreet = streetEnd == start + 2 && tokens[start] in model.street_abbreviations &&
+            tokens[start + 1].length == 1 && tokens[start + 1][0] in 'A'..'Z'
         var postDirection = ""
+        var postName = ""
         val suffixIndex: Int?
         if (boundedStreet) {
+            if (!preserveStreetWords && streetEnd > start + 2) {
+                val first = model.directions[tokens[streetEnd - 2]]
+                val second = model.directions[tokens[streetEnd - 1]]
+                if (first != null && second != null && OPPOSITES[first] == second &&
+                    !(start until streetEnd - 2).all { tokens[it] in model.directions }) {
+                    postDirection = first
+                    postName = DIRECTION_NAMES.getValue(second)
+                    streetEnd -= 2
+                }
+            }
             for (length in 2 downTo 1) {
                 val at = streetEnd - length
-                if (at <= start || (start until at).all { tokens[it] in model.directions }) continue
+                if (postName.isNotEmpty() || preserveStreetWords || alphabeticStreet || at <= start ||
+                    (start until at).all { tokens[it] in model.directions }) continue
                 val direction = direction(tokens, at, streetEnd)
                 if (direction != null && direction.second == length) {
                     postDirection = direction.first
@@ -58,22 +81,61 @@ internal class StreetParser(private val model: Model) {
         }
 
         val nameEnd = suffixIndex ?: streetEnd
-        val pre = direction(tokens, start, nameEnd)?.takeIf { start + it.second < nameEnd }
+        val pre = if (preserveStreetWords) null else direction(tokens, start, nameEnd)?.takeIf { start + it.second < nameEnd }
         val nameStart = start + (pre?.second ?: 0)
-        if (nameStart == nameEnd || (nameStart until nameEnd).any { index ->
+        validateName(tokens, nameStart, nameEnd)
+        cursor.start = if (boundedStreet) unitStart ?: end else streetEnd
+        if (!boundedStreet && !preserveStreetWords) postDirection = takePostDirection(cursor, false)
+        val secondary = secondaries.parse(cursor, explicitBoundary)
+        if (explicitBoundary && cursor.size != 0) invalid("Unexpected words after the secondary unit: ${cursor.text()}")
+        val name = streetName(tokens, nameStart, nameEnd, pre?.first, suffixIndex != null, alphabeticStreet)
+        return StreetDelivery(
+            number, pre?.first ?: "", if (postName.isEmpty()) name else "$name $postName",
+            suffixIndex?.let { model.street_abbreviations.getValue(tokens[it]) } ?: "",
+            postDirection, secondary.unit, secondary.range, cursor.start, secondary.privateMailbox,
+        )
+    }
+
+    private fun preservedStreet(cursor: TokenCursor, number: String, explicit: Boolean): StreetDelivery {
+        val start = cursor.start
+        if (cursor.size < 2) invalid("Puerto Rico street type requires a street name")
+        val firstName = cursor.tokens[start + 1]
+        if (firstName in model.secondary_units && model.secondary_units[firstName] !in model.secondary_range_unneeded &&
+            beginsSecondary(cursor.tokens, start + 1, cursor.end)) invalid("Street name is missing before the secondary unit")
+        val unitStart = findUnit(cursor.tokens, start + 1, cursor.end)
+        if (!explicit && unitStart == null) invalid("Use a comma or newline after a Puerto Rico street name")
+        val streetEnd = unitStart ?: cursor.end
+        validateName(cursor.tokens, start, streetEnd)
+        val name = cursor.text(start, streetEnd)
+        cursor.start = streetEnd
+        val secondary = secondaries.parse(cursor, explicit)
+        if (explicit && cursor.size != 0) invalid("Unexpected words after the secondary unit: ${cursor.text()}")
+        return StreetDelivery(number, "", name, "", "", secondary.unit, secondary.range, cursor.start, secondary.privateMailbox)
+    }
+
+    private fun validateName(tokens: List<String>, start: Int, end: Int) {
+        if (start == end || (start until end).any { index ->
                 val word = tokens[index]
                 word == "#" || word == "/" || word.none { it.isLetterOrDigit() }
-            }) {
-            invalid("Street name is missing or malformed")
+            }) invalid("Street name is missing or malformed")
+        if ((start until end).any { beginsSpecialDelivery(tokens, it, end) }) {
+            invalid("Separate multiple delivery addresses onto distinct lines")
         }
-        cursor.start = if (boundedStreet) unitStart ?: end else streetEnd
-        if (!boundedStreet) postDirection = takePostDirection(cursor, false)
-        val (unit, range) = secondary(cursor)
-        if (explicitBoundary && cursor.size != 0) invalid("Unexpected words after the secondary unit: ${cursor.text()}")
-        return StreetDelivery(
-            number, pre?.first ?: "", tokens.text(nameStart, nameEnd), suffixIndex?.let { model.street_abbreviations.getValue(tokens[it]) } ?: "",
-            postDirection, unit, range, cursor.start,
-        )
+    }
+
+    private fun streetName(tokens: List<String>, start: Int, end: Int, pre: String?, hasSuffix: Boolean, alphabeticStreet: Boolean): String {
+        val first = tokens[start]
+        val opposing = pre?.let { OPPOSITES[it] }?.takeIf { it == model.directions[first] }
+        val head = if (opposing != null) DIRECTION_NAMES.getValue(opposing)
+            else if (alphabeticStreet) model.streetFullNames[first] ?: first else first
+        val last = tokens[end - 1]
+        val tail = if (hasSuffix) model.streetFullNames[last] ?: last else last
+        if (head == first && tail == last) return tokens.text(start, end)
+        if (start + 1 == end) return if (head != first) head else tail
+        return buildString {
+            append(head)
+            for (index in start + 1 until end) append(' ').append(if (index == end - 1) tail else tokens[index])
+        }
     }
 
     private fun houseNumber(tokens: TokenCursor): String {
@@ -109,9 +171,9 @@ internal class StreetParser(private val model: Model) {
             (slash + 1 until value.length).any { value[it] != '0' }
     }
 
-    private fun highway(cursor: TokenCursor, number: String, explicit: Boolean): StreetDelivery? {
+    private fun highway(cursor: TokenCursor, number: String, explicit: Boolean, preserveDirections: Boolean): StreetDelivery? {
         val initial = cursor.start
-        val pre = direction(cursor.tokens, initial, cursor.end)
+        val pre = if (preserveDirections) null else direction(cursor.tokens, initial, cursor.end)
         val starts = if (pre == null) listOf(initial) else listOf(initial + pre.second, initial)
         for (start in starts) {
             if (start >= cursor.end) continue
@@ -120,28 +182,64 @@ internal class StreetParser(private val model: Model) {
                 if (start + length >= cursor.end) continue
                 val highway = model.csl[if (length == 1) first else cursor.text(start, start + length)] ?: continue
                 val route = cursor.tokens[start + length]
-                if (!ROUTE_NUMBER.matches(route)) continue
+                if (!validRoute(highway, route)) continue
                 cursor.start = start + length + 1
-                return highwayResult(cursor, number, if (start == initial) "" else pre!!.first, "$highway $route", explicit)
+                // Appendix F uses SR for STATE ROAD with numeric routes and STATE ROUTE with letter routes.
+                val name = highwayName(highway, first, route)
+                return highwayResult(cursor, number, if (start == initial) "" else pre!!.first, "$name $route", explicit, preserveDirections)
             }
             val compact = first
             val dash = compact.indexOf('-')
             if (dash > 0) {
                 val highway = model.csl[compact.substring(0, dash)] ?: continue
                 val route = compact.substring(dash + 1)
-                if (!ROUTE_NUMBER.matches(route)) continue
+                if (!validRoute(highway, route)) continue
                 cursor.start = start + 1
-                return highwayResult(cursor, number, if (start == initial) "" else pre!!.first, "$highway $route", explicit)
+                val name = highwayName(highway, compact.substring(0, dash), route)
+                return highwayResult(cursor, number, if (start == initial) "" else pre!!.first, "$name $route", explicit, preserveDirections)
+            }
+            val digit = compact.indexOfFirst { it in '0'..'9' }
+            if (digit > 0) {
+                val highway = model.csl[compact.substring(0, digit)] ?: continue
+                val route = compact.substring(digit)
+                if (!validRoute(highway, route)) continue
+                cursor.start = start + 1
+                return highwayResult(cursor, number, if (start == initial) "" else pre!!.first, "$highway $route", explicit, preserveDirections)
             }
         }
         return null
     }
 
-    private fun highwayResult(cursor: TokenCursor, number: String, pre: String, name: String, explicit: Boolean): StreetDelivery {
-        val post = takePostDirection(cursor, explicit)
-        val (unit, range) = secondary(cursor)
+    private fun validRoute(highway: String, route: String): Boolean = ROUTE_NUMBER.matches(route) &&
+        (route[0] in '0'..'9' || (highway !in NUMERIC_HIGHWAYS && route !in model.street_abbreviations && route !in model.secondary_units))
+
+    private fun highwayName(highway: String, alias: String, route: String): String =
+        if (alias == "SR" && highway == "STATE ROAD" && route.all { it in 'A'..'Z' }) "STATE ROUTE" else highway
+
+    private fun highwayResult(cursor: TokenCursor, number: String, pre: String, name: String, explicit: Boolean, preserveDirections: Boolean): StreetDelivery {
+        var streetName = name
+        var suffix = ""
+        if (explicit && cursor.first() == "FRONTAGE" && cursor.first(1) in model.street_abbreviations) {
+            streetName += " FRONTAGE"
+            cursor.start++
+        }
+        val first = cursor.first()
+        if (explicit && first != null && first in model.street_abbreviations && !secondaries.begins(cursor.tokens, cursor.start, cursor.end, true)) {
+            val second = cursor.first(1)
+            if (second != null && second in model.street_abbreviations && !secondaries.begins(cursor.tokens, cursor.start + 1, cursor.end, true)) {
+                streetName += " ${model.streetFullNames[first] ?: first}"
+                cursor.start++
+            }
+            suffix = model.street_abbreviations.getValue(cursor.first()!!)
+            cursor.start++
+        }
+        val post = if (preserveDirections) "" else takePostDirection(cursor, explicit)
+        val next = cursor.first()
+        val ambiguousCity = !explicit && next in model.street_abbreviations && next in model.secondary_units &&
+            !beginsSecondary(cursor.tokens, cursor.start, cursor.end)
+        val secondary = if (ambiguousCity) SecondaryDelivery.EMPTY else secondaries.parse(cursor, explicit)
         if (explicit && cursor.size != 0) invalid("Unexpected words after highway number: ${cursor.text()}")
-        return StreetDelivery(number, pre, name, "", post, unit, range, cursor.start)
+        return StreetDelivery(number, pre, streetName, suffix, post, secondary.unit, secondary.range, cursor.start, secondary.privateMailbox)
     }
 
     private fun findUnit(tokens: List<String>, start: Int, end: Int): Int? {
@@ -151,7 +249,7 @@ internal class StreetParser(private val model: Model) {
         return (start + 1 until end).firstOrNull { index ->
             if (!isUnit(tokens[index])) return@firstOrNull false
             val next = if (index + 1 < end) tokens[index + 1] else null
-            val numbered = next == "#" || next?.let(::isUnitRange) == true
+            val numbered = next == "#" || next?.let(secondaries::isConfidentRange) == true
             // FRONT, SIDE, and UNIT may be words inside a street name before its suffix.
             if (!numbered && terminalSuffix != null && index <= terminalSuffix) return@firstOrNull false
             numbered || next == null || model.secondary_units[tokens[index]] !in model.secondary_range_unneeded ||
@@ -159,34 +257,7 @@ internal class StreetParser(private val model: Model) {
         }
     }
 
-    private fun secondary(cursor: TokenCursor): Pair<String, String> {
-        val token = cursor.first() ?: return "" to ""
-        val identifier = if (token == "#") "#" else model.secondary_units[token] ?: return "" to ""
-        cursor.start++
-        val numbered = cursor.first() == "#"
-        if (numbered && identifier == "#") invalid("Repeated secondary unit marker '#'")
-        if (numbered) cursor.start++
-        val range = cursor.first()
-        if (range != null && isUnitRange(range)) { cursor.start++; return identifier to range }
-        if (!numbered && identifier in model.secondary_range_unneeded) return identifier to ""
-        invalid("Secondary identifier '$identifier' requires a valid unit number")
-    }
-
-    private fun isUnit(token: String): Boolean = token == "#" || token in model.secondary_units
-
-    private fun isUnitRange(value: String): Boolean {
-        var hasDigit = false
-        var previousHyphen = true
-        for (char in value) {
-            when (char) {
-                in '0'..'9' -> { hasDigit = true; previousHyphen = false }
-                in 'A'..'Z' -> previousHyphen = false
-                '-' -> { if (previousHyphen) return false; previousHyphen = true }
-                else -> return false
-            }
-        }
-        return !previousHyphen && (hasDigit || value.length == 1)
-    }
+    private fun isUnit(token: String): Boolean = secondaries.isDesignator(token)
 
     private fun takePostDirection(cursor: TokenCursor, explicit: Boolean): String {
         val found = direction(cursor.tokens, cursor.start, cursor.end) ?: return ""
@@ -212,8 +283,12 @@ internal class StreetParser(private val model: Model) {
     }
 
     private companion object {
-        val HOUSE_NUMBER = Regex("[0-9]+(?:-[0-9]+)?(?:-?[A-Z])?")
-        val ROUTE_NUMBER = Regex("[0-9]+(?:-?[A-Z])?(?:-[0-9]+[A-Z]?)?")
+        val HOUSE_NUMBER = Regex("[A-Z]*[0-9]+[A-Z0-9]*(?:-[A-Z0-9]+)*")
+        val ROUTE_NUMBER = Regex("[0-9]+(?:-?[A-Z]+)?(?:-[0-9]+[A-Z]*)?|[A-Z]{1,2}")
         val CARDINALS = setOf("N", "S", "E", "W")
+        val OPPOSITES = mapOf("N" to "S", "S" to "N", "E" to "W", "W" to "E")
+        val DIRECTION_NAMES = mapOf("N" to "NORTH", "S" to "SOUTH", "E" to "EAST", "W" to "WEST")
+        val PUERTO_RICO_STREET_TYPES = setOf("CALLE", "AVENIDA", "AVE")
+        val NUMERIC_HIGHWAYS = setOf("INTERSTATE", "US HIGHWAY")
     }
 }

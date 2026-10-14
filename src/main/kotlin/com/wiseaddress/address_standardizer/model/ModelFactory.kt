@@ -61,12 +61,18 @@ class ModelFactory private constructor() {
             val secondary = objectSection(data, "secondary")
             return Model(
                 street_abbreviations = arrayAliases(data, "street_abbreviations"),
-                secondary_units = stringAliases(secondary, "units", "secondary.units"),
+                secondary_units = expandAliases(objectSection(secondary, "units", "secondary.units"), "secondary.units") { value, path ->
+                    if (value is JSONArray) stringArray(value, path) else listOf(modelString(value, path))
+                },
                 secondary_range_unneeded = stringArray(secondary.opt("range_unneeded"), "secondary.range_unneeded"),
                 states = stringAliases(data, "states"),
                 directions = stringAliases(data, "directions"),
                 miscellaneous = arrayAliases(data, "miscellaneous"),
                 csl = arrayAliases(data, "county_state_localhwy"),
+                street_suffix_names = if (!data.has("street_suffix_names")) emptyMap() else
+                    objectSection(data, "street_suffix_names").let { table ->
+                        table.keySet().associateWith { modelString(table.opt(it), "street_suffix_names.$it") }
+                    },
             )
         }
 

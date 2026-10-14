@@ -68,12 +68,13 @@ class ParserCompatibilityTest {
         for (unit in listOf("A", "A-1-B")) {
             assertEquals(unit, parser.standardize("123 Main St Apt $unit, Boston MA 02108").secondaryRange)
         }
-        for (unit in listOf("AB", "A-B", "A-1-")) {
+        assertEquals("AB", parser.standardize("123 Main St Apt AB, Boston MA 02108").secondaryRange)
+        for (unit in listOf("A-B", "A-1-")) {
             assertFailsWith<InvalidAddressException>(unit) {
                 parser.standardize("123 Main St Apt $unit, Boston MA 02108")
             }
         }
-        assertEquals("US 12AB", parser.standardize("123 US 12AB, Austin TX 78701").streetName)
+        assertEquals("US HIGHWAY 12AB", parser.standardize("123 US 12AB, Austin TX 78701").streetName)
     }
 
     @Test

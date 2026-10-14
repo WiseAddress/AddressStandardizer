@@ -5,7 +5,7 @@ import java.util.Collections
 import java.util.Locale
 
 /** Immutable, validated alias-to-canonical lookup tables, safe to share between standardizers. */
-class Model(
+class Model @JvmOverloads constructor(
     street_abbreviations: Map<String, String>,
     secondary_units: Map<String, String>,
     secondary_range_unneeded: List<String>,
@@ -13,6 +13,7 @@ class Model(
     directions: Map<String, String>,
     miscellaneous: Map<String, String>,
     csl: Map<String, String>,
+    street_suffix_names: Map<String, String> = emptyMap(),
 ) {
     val street_abbreviations: Map<String, String> = immutableLookup(street_abbreviations, "street_abbreviations")
     val secondary_units: Map<String, String> = immutableLookup(secondary_units, "secondary.units")
@@ -20,6 +21,7 @@ class Model(
     val directions: Map<String, String> = immutableLookup(directions, "directions")
     val miscellaneous: Map<String, String> = immutableLookup(miscellaneous, "miscellaneous")
     val csl: Map<String, String> = immutableLookup(csl, "county_state_localhwy")
+    internal val streetFullNames: Map<String, String> = suffixNames(street_suffix_names)
     internal val stateWordCountsByLastToken: Map<String, List<Int>> =
         indexWordCounts(this.states.keys) { it.substringAfterLast(' ') }
     internal val highwayWordCountsByFirstToken: Map<String, List<Int>> =
@@ -53,6 +55,23 @@ class Model(
             }
         }
         return Collections.unmodifiableMap(copy)
+    }
+
+    private fun suffixNames(source: Map<String, String>): Map<String, String> {
+        val names = LinkedHashMap<String, String>()
+        for ((key, value) in source) {
+            val canonical = normalizeModelToken(key, "street_suffix_names")
+            val full = normalizeModelToken(value, "street_suffix_names.$key")
+            if (canonical !in street_abbreviations || street_abbreviations[full] != street_abbreviations[canonical]) {
+                throw InvalidModelException("street_suffix_names.$key must identify a known suffix and its full name")
+            }
+            if (names.putIfAbsent(canonical, full) != null) {
+                throw InvalidModelException("street_suffix_names contains duplicate canonical identifier '$canonical'")
+            }
+        }
+        return Collections.unmodifiableMap(street_abbreviations.mapNotNull { (alias, canonical) ->
+            (names[alias] ?: names[canonical])?.let { alias to it }
+        }.toMap())
     }
 
     private fun indexWordCounts(aliases: Set<String>, boundaryToken: (String) -> String): Map<String, List<Int>> {
